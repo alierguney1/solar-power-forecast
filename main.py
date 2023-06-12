@@ -12,262 +12,478 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import tensorflow as tf
+from datetime import datetime
+from tensorflow import keras
+from scipy import stats
 
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM, Dropout
-from tensorflow.keras.models import load_model
+# Maximum Capacity of the Solar Farms
 
-# Maximum Capacity of the Solar Farm
-MAX_CAPACITY = int(30)
+max_capacities = {
+                  1 : 50 ,
+                  2 : 130,
+                  3 : 30 ,
+                  4 : 130,
+                  5 : 110,
+                  6 : 35 ,
+                  7 : 30 ,
+                  8 : 30
+                  }
 
-# Load data
-df = pd.read_csv('data.csv') 
-df.columns = [
-    'time',
-    'tsi',
-    'dni',
-    'ghi',
-    'temp',
-    'atm',
-    'rh',
-    'power'
-]
+def load_data(filepath, data_number):
+    # Load data
+    df = pd.read_csv(filepath) 
+    print("\n ", filepath, "\n ")
+    #Change column names
+    df.columns = [
+        'time',
+        'tsi',
+        'dni',
+        'ghi',
+        'temp',
+        'atm',
+        'rh',
+        'power'
+    ]
 
-"""
-new_column_names = {
-    'Time(year-month-day h:m:s)': 'time',
-    'Total solar irradiance (W/m2)': 'tsi',
-    'Direct normal irradiance (W/m2)': 'dni',
-    'Global horizontal irradiance (W/m2)': 'ghi',
-    'Air temperature  (°C)': 'temp',
-    'Atmosphere (hpa)': 'atm',
-    'Relative humidity (%)': 'rh',
-    'Power (MW)': 'power'
-}
-"""
+    """
+            New column names:
+            'Time(year-month-day h:m:s)': 'time',
+            'Total solar irradiance (W/m2)': 'tsi',
+            'Direct normal irradiance (W/m2)': 'dni',
+            'Global horizontal irradiance (W/m2)': 'ghi',
+            'Air temperature  (°C)': 'temp',
+            'Atmosphere (hpa)': 'atm',
+            'Relative humidity (%)': 'rh',
+            'Power (MW)': 'power'
+    """
 
-cols = df.columns[1:]
+    # Convert all columns except the first one to float
+    cols = df.columns[1:]
+    for col in cols: df[col] = pd.to_numeric(df[col], errors='coerce')
 
-# Convert all columns except the first one to float
-for col in cols:
-    df[col] = pd.to_numeric(df[col], errors='coerce') 
+    # Divide by the maximum capaicity of the plant
+    df["power"] = df["power"] / max_capacities[data_number]
 
-# Convert to datetime object
-df['time'] = pd.to_datetime(df['time'])
-# Normalize power by dividing to the MAX_CAPACITY
-df['power'] = df['power']/ MAX_CAPACITY
-df.set_index('time', inplace=True)
-print(df.describe())
-print(df.head())
-df.info()
+    # Convert to datetime object
+    df['time'] = pd.to_datetime(df['time'])
+    df.set_index('time', inplace=True)
+    df.dropna(inplace=True)
 
+    # Create Daily and Yearly sin-cos values to give the model info about the day-state and year-state
+    df["Seconds"] = df.index.map(pd.Timestamp.timestamp)
+    seconds_in_day = 60*60*24
+    seconds_in_year = seconds_in_day * 365.2425
+    df['Day sin'] = (np.sin(df['Seconds'] * (2* np.pi / seconds_in_day)) +1 )/ 2
+    df['Day cos'] = (np.cos(df['Seconds'] * (2 * np.pi / seconds_in_day)) +1) / 2
+    df['Year sin'] = (np.sin(df['Seconds'] * (2 * np.pi / seconds_in_year)) +1) / 2
+    df['Year cos'] = (np.cos(df['Seconds'] * (2 * np.pi / seconds_in_year)) +1) / 2
+    df = df.drop('Seconds', axis=1)
+    
+    # Remove Outlier Values (Z score > 3)
+    df = df[(np.abs(stats.zscore(df)) < 3).all(axis=1)]  
+    
+    print(df.describe())
+    print(df.info())
+    return df
 
+df1 = load_data("data1.csv" , 1)
+df2 = load_data("data2.csv" , 2)
+df3 = load_data("data3.csv" , 3)
+df4 = load_data("data4.csv" , 4)
+df5 = load_data("data5.csv" , 5)
+df6 = load_data("data6.csv" , 6)
+df7 = load_data("data7.csv" , 7)
+df8 = load_data("data8.csv" , 8)
+df1.head()
 
-#df.fillna(method="ffill")
+df1[50:55]
 
-print(df.head())
-df_1day = df.head(96)
-df_1day
+# Plot the first week power generation
+def plot_first_week_power(df):
+    fig, ax = plt.subplots(figsize=(10, 1.5))
+    ax.plot(df.index[:96*7], df["power"][:96*7])
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Power')
+    plt.show()
 
-a1_list = []
-for i in range(1,96):
+plot_first_week_power(df1)
+plot_first_week_power(df2)
+plot_first_week_power(df3)
+plot_first_week_power(df4)
+plot_first_week_power(df5)
+plot_first_week_power(df6)
+plot_first_week_power(df7)
+plot_first_week_power(df8)
 
-    abcd = df['power'][i::96]
-    a1 = (abcd.sum()) / int(len(abcd))
-   
-    a1_list.append(a1)
-a1_list 
+def replace_outliers_with_avg(df):
+    for column in df.columns:
+        
+        # Calculate z-score for each value in the column
+        z_scores = (df[column] - df[column].mean()) / df[column].std()
+        
+        # Identify outlier indices
+        outlier_indices = np.abs(z_scores) > 3
+        
+        # Replace outliers with the average of previous and next 2 cells
+        for i in range(len(df)):
+            if outlier_indices[i]:
+                start_index = max(0, i - 2)
+                end_index = min(len(df), i + 3)
+                avg_value = df[column][start_index:end_index].mean()
+                df[column][i] = avg_value
+    
+    return df
+dfold = df1
+replace_outliers_with_avg(df1)
 
-fig, ax = plt.subplots(figsize=(10, 6))
-print(df.index.hour[1:96:1]+df.index.minute[1:96:1])
-ax.plot(df.index[1:96:1], a1_list)
+dfold.describe(), df1.describe()
 
+fig, ax = plt.subplots(figsize=(10, 2))
+ax.plot(df1.index[:96*2], df1["Day sin"][:96*2])
+plt.title('Day sin & Day cos')
+ax.plot(df1.index[:96*2], df1["Day cos"][:96*2])
 plt.show()
 
-#df_1day.set_index('time', inplace=True)
+fig, ax = plt.subplots(figsize=(10, 2))
+ax.plot(df1.index[:96*2*365], df1["Year sin"][:96*2*365])
+plt.title('Year sin & Year cos')
+ax.plot(df1.index[:96*2*365], df1["Year cos"][:96*2*365])
+plt.show()
 
-# Create a line chart
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(df_1day.index, df_1day['tsi'], label='TSI')
-ax.plot(df_1day.index, df_1day['dni'], label='DNI')
-ax.plot(df_1day.index, df_1day['ghi'], label='GHI')
-ax.plot(df_1day.index, df_1day['atm'], label='atm')
-ax.plot(df_1day.index, df_1day['rh'], label='rh')
-ax.plot(df_1day.index, df_1day['power'], label='power')
-ax.set_xlabel('Time')
-ax.set_ylabel('Irradiance (W/m2)')
-ax.set_title('Solar Irradiance')
-ax.legend()
+import seaborn as sns
+for col in df1.columns:
 
-# Save the chart to a file
-plt.savefig('solar_irradiance.png')
+    sns.boxplot(df1[col])
+    sns.set(rc={'figure.figsize':(3,5)})
+    name = 'Box Plot of ' +  str(col)
+    plt.title(name)
+    plt.show()
+
+df1_1day = df1[:96].copy()
+df7_1day = df7[:96].copy()
+
+def plot_line_chart(df_i,source_df):
+    columns = df_i.columns
+
+    # Create a line chart
+    fig, ax = plt.subplots(figsize=(5,3))
+    for col in columns:
+        ax.plot(df_i.index, df_i[col], label=col)
+    
+    ax.set_xlabel('Time')
+    ax.set_title('All variables')
+    ax.legend()
+    plt.show()
+plot_line_chart(df1_1day,df1)
+
+def plot_line_chart_stand(df_i,source_df):
+    columns = df_i.columns
+    for col in columns: df_i[col] = df_i[col] / source_df[col].max()
+    fig, ax = plt.subplots(figsize=(10,3))
+    for col in columns: ax.plot(df_i.index, df_i[col], label=col)
+    ax.set_xlabel('Time')
+    ax.set_title('All variables')
+    ax.legend(loc=3)
+    plt.show()
+
+plot_line_chart_stand(df7_1day,df7)
+
+num_cols = df6.columns
+def plot_density_hist(df_weather_actual, bins = 10, hist = False):
+    cols = df_weather_actual.columns
+    for col in cols:
+        sns.set_style("whitegrid")
+        sns.distplot(df_weather_actual[col], bins = bins, rug=True, hist = hist)
+        plt.title('Histogram of ' + col) # Give the plot a main title
+        plt.xlabel(col) # Set text for the x axis
+        plt.ylabel('Number of data')# Set text for y axis
+        plt.show()
+        
+plot_density_hist(df1, hist=True)
 
 import matplotlib.ticker as ticker
-df["tsi"].value_counts()
 
-fig, ax = plt.subplots(figsize=(10, 6))
-#dfHours["Hour"] = dfHours.index.hour()
-#plt.hist(dfHours["power"])
+def plot_hourly_bar_chart(data):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    dfHours = data.copy()
+    dfHours["Hour"] = data.index.hour
+    bins = 10
+    hist = True
+    sns.set_style("whitegrid")
+    sns.distplot(data["power"], bins = bins, rug=True, hist = hist)
+    plt.title('Histogram of ' + "power") # Give the plot a main title
+    plt.xlabel("power") # Set text for the x axis
+    plt.ylabel('Number of data')# Set text for y axis
+    plt.show()
 
-hours = df.index.hour
-print(hours)
-dfHours = df.copy()
-dfHours["Hour"] = hours
-#  the chart
-'''plt.bar(dfHours["Hour"],dfHours["power"])
-tick_spacing = 1
-ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_spacing))
-plt.show()'''
+    plt.bar(dfHours["Hour"], dfHours["power"])
+    tick_spacing = 1
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_spacing))
+    plt.show()
+#plot_hourly_bar_chart(df6)
 
-# Feature correlation for all features
-plt.figure(figsize=(7, 7))
-sns.heatmap(df.corr(), cmap='Reds', annot=True)
-plt.title('Feature correlation');
-
-# Create training data set with a certain LAG for training the model
-
-df_temp1 = df.copy()
-df_temp1.reset_index(drop=True, inplace=True)  # Reset the index of df_temp1
-
-LAG = 3
-
-inputs = []
-outputs = []
-for i in range(len(df_temp1["power"])-10):
-    deneme_list = []
-    for j in range(LAG):
-        deneme_list.append(df_temp1.loc[(i-j)+LAG-1, :].values.flatten().tolist())
-    inputs.append(list(np.concatenate(deneme_list).flat))
-    outputs.append(df_temp1["power"][i])
-
-print(df_temp1.head(10))
-print(outputs)
-inputs
-
-# train test
-from sklearn.model_selection import train_test_split
-X = inputs
-y = outputs
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=None, shuffle = False)
-print(X_train[1:5:1])
-
-# Scaling
-
-from sklearn.preprocessing import StandardScaler
-
-sc = StandardScaler()
-X_train = sc.fit_transform(X_train)
-X_test = sc.transform(X_test)
-X_train
-X_test
-
-'''
-# Model
-model = Sequential()
-model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
-model.add(Dense(units=1))
-
-model.summary()
-
-# Compile the model
-model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mse'])
-
-# Fit the model
-#model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test))
-
-# Evaluate the model
-loss, mse = model.evaluate(X_test, y_test)
-print('Mean squared error: ', mse)
-
-# Make predictions
-y_pred = model.predict(X_test)
-'''
-'''
-# Visualize the predictions
-plt.plot(y_test, color='blue', label='Actual Power')
-plt.plot(y_pred, color='red', label='Predicted Power')
-plt.title('Power Prediction')
-plt.xlabel('Time')
-plt.ylabel('Power')
-plt.legend()
-plt.show()
-'''
-plt.plot(y_test[1:100], color='blue', label='Actual Power')
-#plt.plot(y_pred, color='red', label='Predicted Power')
-plt.title('Power Prediction')
-plt.xlabel('Time')
-plt.ylabel('Power')
-plt.legend()
-plt.show()
-
-# Preprocessing
-from sklearn.preprocessing import MinMaxScaler
-scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(inputs)
-scaled_data
-
-# Define input and output variables
-#features = ['TSI', 'DNI', 'GHI', 'Temperature', 'Atmosphere', 'Humidity']
-#target = 'Power'
-
-
-'''
-
-# Split into train and test sets
-train_size = int(len(scaled_data) * 0.7)
-train_data = scaled_data[:train_size, :]
-test_data = scaled_data[train_size:, :]
-
-# Create function to create LSTM model
-def create_model(train_data):
-    x_train = []
-    y_train = []
-    for i in range(60, len(train_data)):
-        x_train.append(train_data[i-60:i, :-1])
-        y_train.append(train_data[i, -1])
-    x_train, y_train = np.array(x_train), np.array(y_train)
-
-    # Reshape input data to be 3D
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], len(features)))
-
-    # Create LSTM model
-    model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=(x_train.shape[1], len(features))))
-    model.add(LSTM(units=50))
-    model.add(Dense(units=1))
-
-    # Compile model
-    model.compile(optimizer='adam', loss='mean_squared_error')
-
-    # Train model
-    model.fit(x_train, y_train, epochs=10, batch_size=32)
-
-    return model
-
-# Create LSTM model
-model = create_model(train_data)
-
-# Forecast test data
-inputs = scaled_data[len(scaled_data) - len(test_data) - 60:]
-x_test = []
-for i in range(60, inputs.shape[0]):
-    x_test.append(inputs[i-60:i, :-1])
-x_test = np.array(x_test)
-x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], len(features)))
-predicted_values = model.predict(x_test)
-predicted_values = scaler.inverse_transform(predicted_values)
-
-# Plot results
 import matplotlib.pyplot as plt
-plt.plot(data[target].values[train_size + 60:], color='blue', label='Actual')
-plt.plot(predicted_values, color='red', label='Predicted')
+import seaborn as sns
+
+def plot_feature_correlations(datasets):
+    fig, axs = plt.subplots(4, 2, figsize=(8, 16))  # 4 rows, 2 columns for 8 subplots
+
+    for i, data in enumerate(datasets):
+        row = i // 2  # determine the row index
+        col = i % 2   # determine the column index
+        sns.heatmap(data.corr(), cmap='Reds', annot=False, ax=axs[row, col])
+        axs[row, col].set_title(f'Feature correlation {i+1}')
+
+    plt.tight_layout()  # ensures that the subplots do not overlap
+    plt.show()
+
+temp_list_df = [df1,df2,df3,df4,df5,df6,df7,df8]
+plot_feature_correlations(temp_list_df)
+
+# Create training data set with a window_size
+
+def CreateDataset(df, window_size ,pred_distance):
+    # Reset index to iterate
+    df = df.copy()
+    df.reset_index(drop=True, inplace=True)  
+    inputs = []
+    outputs = []
+    for i in range(len(df)-window_size):
+        X_list = []
+        y_list = []
+        
+        for j in range(window_size):
+            X_list.append(df.loc[(i-j)+window_size-1, :])
+        inputs.append(np.array(X_list))
+
+        for k in range(pred_distance):       
+            y_list.append(df['power'][i+k+1])
+        outputs.append(np.array(y_list))
+        
+    return np.array(inputs) , np.array(outputs)
+
+window_size = 8
+pred_distance = 8
+
+# We decided to not include df3 to train the model
+
+X_1, y_1 = CreateDataset(df1, window_size, pred_distance)
+X_2, y_2 = CreateDataset(df2, window_size, pred_distance)
+X_4, y_4 = CreateDataset(df4, window_size, pred_distance)
+X_5, y_5 = CreateDataset(df5, window_size, pred_distance)
+X_6, y_6 = CreateDataset(df6, window_size, pred_distance)
+X_7, y_7 = CreateDataset(df7, window_size, pred_distance)
+X_8, y_8 = CreateDataset(df8, window_size, pred_distance)
+
+# Fitting a linear regression model
+
+from sklearn import linear_model
+from sklearn.model_selection import train_test_split
+import sklearn.metrics as sklm
+import math
+
+def print_metrics(y_true, y_predicted, n_parameters):
+    ## First compute R^2 and the adjusted R^2
+    r2 = sklm.r2_score(y_true, y_predicted)
+    r2_adj = r2 - (n_parameters - 1)/(y_true.shape[0] - n_parameters) * (1 - r2)
+    ## Print the usual metrics and the R^2 values
+    print('Mean Square Error      = ' + str(sklm.mean_squared_error(y_true, y_predicted)))
+    y_true_1 = y_true * max_capacities[6]
+    y_predicted_1 = y_predicted * max_capacities[6]
+    print('RMSE = ' + str(math.sqrt(sklm.mean_squared_error(y_true_1, y_predicted_1[:13845]))))
+    print('R-squared   = ' + str(r2))
+    print('Adjusted R^2           = ' + str(r2_adj))
+    return sklm.mean_squared_error(y_true, y_predicted), r2
+
+X_lin, y_lin = CreateDataset(df6, window_size = 1, pred_distance = 1)
+X_lin_train, X_lin_test, y_lin_train, y_lin_test = train_test_split(X_lin, y_lin, test_size=0.2, random_state=None, shuffle = False)
+
+lin_mod = linear_model.LinearRegression(fit_intercept = False)
+lin_mod.fit(X_lin_train[:,:,0].flatten().reshape(-1,1), y_lin_train[:,0].flatten().reshape(-1,1))
+y_score = lin_mod.predict(X_lin_test[:,:,0].flatten().reshape(-1,1))
+y_score = [x if x > 0 else 0 for x in y_score]
+(rmse, r2) = print_metrics(y_lin_test, y_score, 1)
+
+print("RMSE of Linear Model: ", 0.36116505266507093*max_capacities[6])
+
+# Here is a function to correct data types in the prediction array
+def transform_arrays(arr):
+    transformed_arr = []
+    for item in arr:
+        if isinstance(item, np.ndarray):
+            transformed_arr.append(float(item))
+        else:
+            transformed_arr.append(item)
+    return transformed_arr
+y_score = transform_arrays(y_score)
+
+fig, ax = plt.subplots(figsize=(10,5))
+ax.plot(y_score[96*5:96*6], label = "Linear Regression Prediction")
+ax.plot(y_lin_test[96*5:96*6], label = "Actual Data")
+ax.set_xlabel('Time')
+ax.set_title('All variables')
+ax.legend()
+plt.show()
+
+# Creating train test sets
+from sklearn.model_selection import train_test_split
+X_train_1, X_test_1, y_train_1, y_test_1 = train_test_split(X_1, y_1, test_size=0.2, random_state=None, shuffle = False)
+X_train_2, X_test_2, y_train_2, y_test_2 = train_test_split(X_2, y_2, test_size=0.2, random_state=None, shuffle = False)
+X_train_4, X_test_4, y_train_4, y_test_4 = train_test_split(X_4, y_4, test_size=0.2, random_state=None, shuffle = False)
+X_train_5, X_test_5, y_train_5, y_test_5 = train_test_split(X_5, y_5, test_size=0.2, random_state=None, shuffle = False)
+X_train_6, X_test_6, y_train_6, y_test_6 = train_test_split(X_6, y_6, test_size=0.2, random_state=None, shuffle = False)
+X_train_7, X_test_7, y_train_7, y_test_7 = train_test_split(X_7, y_7, test_size=0.2, random_state=None, shuffle = False)
+X_train_8, X_test_8, y_train_8, y_test_8 = train_test_split(X_8, y_8, test_size=0.2, random_state=None, shuffle = False)
+
+def PreProcess(X):
+    j=0
+    for i in df6.columns:
+        X[:, :, j] = ((X[:, :, j] - (df6[i].min()))/( df6[i].max() - df6[i].min() ))
+        if j<= len(df6.columns) -2 : j = j+1  
+    return X
+
+temp_list_1 = [X_train_1, X_test_1,X_train_2, X_test_2,X_train_4, X_test_4,X_train_5, X_test_5,X_train_6, X_test_6,X_train_7, X_test_7,X_train_8, X_test_8]
+temp_list_2 = [y_train_1, y_test_1, y_train_2, y_test_2, y_train_4, y_test_4 , y_train_5, y_test_5, y_train_6, y_test_6,y_train_7, y_test_7,y_train_8, y_test_8]
+for i in temp_list_1:
+    PreProcess(i)
+
+for i in temp_list_1:
+    print(i.shape)
+
+from tensorflow import keras
+from keras.layers import *
+from keras.models import Sequential
+from keras.callbacks import ModelCheckpoint
+from keras.losses import MeanSquaredError
+from keras.metrics import RootMeanSquaredError
+from keras.optimizers import Adam
+
+n_features = 11
+window_size = 8
+pred_distance = 8
+model1 = Sequential()
+model1.add(InputLayer((window_size, n_features)))
+model1.add(LSTM(16, dropout= 0.001, recurrent_dropout = 0.001))
+model1.add(Dense(8))
+model1.add(Dense(pred_distance, 'relu'))
+
+model1.summary()
+
+model1.compile(loss=MeanSquaredError(), optimizer=Adam(learning_rate=0.0001), metrics=[RootMeanSquaredError()])
+
+loss_list = []
+for i in range(7):
+   model1_hist = model1.fit(temp_list_1[2*i], temp_list_2[2*i], epochs=3)
+   loss_list.append(model1_hist.history["loss"])
+
+loss_list = np.array(loss_list).flatten()   
+plt.plot(loss_list)
+
+def actual_power(y_pred, y_actual, number):
+    actual_pred = y_pred * max_capacities[number]
+    actual_actual = y_actual * max_capacities[number]
+    return actual_pred , actual_actual
+
+# Predicting the train set
+train_predictions = model1.predict(X_train_8)
+train_predictions = actual_power(train_predictions,y_train_8,8)
+train_results = pd.DataFrame(data={'Train Predictions':train_predictions[0][:,0].flatten().tolist(), 'Actuals':train_predictions[1][:,0].flatten().tolist()})
+
+# Plotting Train Prediction vs. Train Data
+plt.figure(figsize =(15,7))
+plt.plot(train_results['Train Predictions'][:200], label = "LSTM Prediction")
+plt.plot(train_results['Actuals'][:200], label = 'Train Data')
 plt.legend()
 plt.show()
+
+# Predicting the test set
+test_predictions = model1.predict(X_test_1)
+test_predictions = actual_power(test_predictions,y_test_1,1)
+test_results = pd.DataFrame(data={'Test Predictions':test_predictions[0][:,0].flatten().tolist(), 'Actuals':test_predictions[1][:,0].flatten().tolist()})
+
+all_results = []
+def predict_test(X_test,y_test,number):
+    test_predictions = model1.predict(X_test)
+    test_predictions = actual_power(test_predictions,y_test,number)
+    test_results = pd.DataFrame(data={'Test Predictions':test_predictions[0][:,0].flatten().tolist(), 'Actuals':test_predictions[1][:,0].flatten().tolist()})
+    all_results.append(test_results)
+
+predict_test(X_test_8,y_test_8,8)
+
+temp_list_1 = [X_train_1, X_test_1,X_train_2, X_test_2,X_train_4, X_test_4,X_train_5, X_test_5,X_train_6, X_test_6,X_train_7, X_test_7,X_train_8, X_test_8]
+temp_list_2 = [y_train_1, y_test_1, y_train_2, y_test_2, y_train_4, y_test_4 , y_train_5, y_test_5, y_train_6, y_test_6,y_train_7, y_test_7,y_train_8, y_test_8]
+
+
+# Make predictions on all test sets
+temp_list_a = [0,1,3,4,5,6]
+predict_list = []
+for i in temp_list_a:
+    predict_list.append(predict_test(temp_list_1[2*i+1],temp_list_2[2*i+1],i+1))
+
+np.array(all_results[0])
+
+test_predictions = model1.predict(X_test_6)
+test_predictions = actual_power(test_predictions,y_test_6,6)
+test_results = pd.DataFrame(data={'Test Predictions':test_predictions[0][:,0].flatten().tolist(), 'Actuals':test_predictions[1][:,0].flatten().tolist()})
+
+# Plotting Train Prediction vs. Train Data
+
+plt.figure(figsize =(15,7))
+plt.plot(test_results['Test Predictions'][96*3:96*5], label = "LSTM Prediction")
+plt.plot(test_results['Actuals'][96*3:96*5], label = 'Test Data')
+plt.legend()
+plt.show()
+
+
+
+def rmse_score(y_true, y_predicted):
+    return math.sqrt(sklm.mean_squared_error(y_true[:,0].flatten().tolist(), y_predicted[:,0].flatten().tolist()))
+
+def r2_score(y_true, y_predicted):
+    return sklm.r2_score(y_true[:,0].flatten().tolist(), y_predicted[:,0].flatten().tolist())
 '''
-print(scaled_data[50])
-print(inputs[50])
-print(outputs[50])
+for i in range(7):
+    rmse_score(all_results[0]["Actuals"], all_results[0]["Test Predictions"]) 
+    #r2_score(test_predictions[1],test_predictions[0])
+'''   
+test_predictions = model1.predict(X_test_1)
+test_predictions = actual_power(test_predictions,y_test_1,1) 
+print("RMSE Score of test set 1: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 1: ",r2_score(test_predictions[1],test_predictions[0]))
 
-print(X_train[50])
-print(y_train[50])
+test_predictions = model1.predict(X_test_2)
+test_predictions = actual_power(test_predictions,y_test_2,2) 
+print("RMSE Score of test set 2: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 2: ",r2_score(test_predictions[1],test_predictions[0]))
 
+test_predictions = model1.predict(X_test_4)
+test_predictions = actual_power(test_predictions,y_test_4,4) 
+print("RMSE Score of test set 4: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 4: ",r2_score(test_predictions[1],test_predictions[0]))
+
+test_predictions = model1.predict(X_test_5)
+test_predictions = actual_power(test_predictions,y_test_5,5) 
+print("RMSE Score of test set 5: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 5: ",r2_score(test_predictions[1],test_predictions[0]))
+
+test_predictions = model1.predict(X_test_6)
+test_predictions = actual_power(test_predictions,y_test_6,6) 
+print("RMSE Score of test set 6: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 6: ",r2_score(test_predictions[1],test_predictions[0]))
+
+test_predictions = model1.predict(X_test_7)
+test_predictions = actual_power(test_predictions,y_test_7,7) 
+print("RMSE Score of test set 7: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 7: ",r2_score(test_predictions[1],test_predictions[0]))
+
+test_predictions = model1.predict(X_test_8)
+test_predictions = actual_power(test_predictions,y_test_8,8) 
+print("RMSE Score of test set 8: ",rmse_score(test_predictions[1],test_predictions[0]))
+print("R-Squared Score of test set 8: ",r2_score(test_predictions[1],test_predictions[0]))
+
+mean_rmse = ( 1.6897214162423047 + 3.317975529145363+  3.793110530524621+  3.793110530524621 + 1.1474116909253789 + 1.2948593897635672 + 0.5509121451632193) /7
+
+mean_r2 = ( 0.9782439392771847 + 0.9841084276404326  +0.9767377798985019 + 0.9187906623726694+ 0.9820403630746106  +0.9692072607628777 + 0.9927281630247763 ) / 7
+print("Mean of RMSE: ", mean_rmse)
+print("Mean of R-squared: ", mean_r2)
