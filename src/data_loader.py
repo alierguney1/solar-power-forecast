@@ -18,7 +18,16 @@ def load_data(filepath, data_number):
     Returns:
         pd.DataFrame: The preprocessed data.
     """
-    df = pd.read_csv(filepath)
+    df = pd.read_csv(filepath,
+                     dtype={
+                         'tsi': float,
+                         'dni': float,
+                         'ghi': float,
+                         'temp': float,
+                         'atm': float,
+                         'rh': float,
+                         'power': float
+                     })
     print(f"\nLoading data from: {filepath}\n")
 
     df.columns = NEW_COLUMN_NAMES
