@@ -5,3 +5,4 @@ seaborn
 tensorflow
 scipy
 scikit-learn
+PyPDF2
