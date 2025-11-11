@@ -6,3 +6,4 @@ tensorflow
 scipy
 scikit-learn
 PyPDF2
+pytest

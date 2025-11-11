@@ -31,6 +31,20 @@ python main.py
 ```
 This will load data, build the LSTM, train, and evaluate on held-out splits.
 
+4) Use the CLI (artifacts saved to `outputs/`)
+```bash
+python -m src.cli summarize -o outputs
+python -m src.cli train-basic -o outputs --random-state 42
+```
+The CLI saves `summary.csv`, per-station prediction CSVs, and a `metrics.json`.
+
 ## Notes
 - Power is normalized by plant capacity during loading (see `src/config.py::MAX_CAPACITIES`).
 - Feature engineering functions are reusable and live under `src/feature_engineering.py`; the notebook imports them only to preview features as part of EDA.
+- For cross-station generalization, see `src/evaluation.py` (leave-one-station-out helper).
+
+## Tests
+Run unit tests with:
+```bash
+pytest -q
+```
