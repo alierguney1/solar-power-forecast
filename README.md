@@ -31,7 +31,19 @@ python main.py
 ```
 This will load data, build the LSTM, train, and evaluate on held-out splits.
 
-4) Use the CLI (artifacts saved to `outputs/`)
+4) Comprehensive model evaluation with comparisons
+```bash
+python evaluate_models.py
+```
+This provides:
+- **Predictions vs Actuals**: Visual comparison of model predictions with ground truth
+- **Baseline Comparison**: Compare LSTM against Linear Regression and Persistence baselines
+- **Overfitting Analysis**: Training vs test loss metrics to detect overfitting
+- **Detailed Reports**: CSV files with all predictions and comparison metrics
+
+See [EVALUATION_GUIDE.md](EVALUATION_GUIDE.md) for detailed documentation.
+
+5) Use the CLI (artifacts saved to `outputs/`)
 ```bash
 python -m src.cli summarize -o outputs
 python -m src.cli train-basic -o outputs --random-state 42
