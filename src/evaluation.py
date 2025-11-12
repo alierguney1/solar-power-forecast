@@ -3,6 +3,7 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 
+from src.config import MAX_WINDOWS_PER_STATION
 from src.model import (
     apply_scaler,
     build_lstm_model,
@@ -36,6 +37,7 @@ def leave_one_station_out(
         train_windowed: List[WindowedDataset] = []
         for s in train_stations:
             ds = create_dataset(station_dfs[s], window_size, pred_distance)
+            ds = ds.limit(MAX_WINDOWS_PER_STATION)
             train_ds, _ = split_windowed_dataset(ds, train_ratio=0.8)
             scaler = fit_scaler(train_ds if train_ds.X.shape[0] > 0 else ds)
             train_windowed.append(apply_scaler(train_ds, scaler))
@@ -49,12 +51,13 @@ def leave_one_station_out(
         train_model(model, train_windowed)
 
         # Prepare test set for left-out station
-        ds_left = create_dataset(station_dfs[left], window_size, pred_distance)
+    ds_left = create_dataset(station_dfs[left], window_size, pred_distance)
+    ds_left = ds_left.limit(MAX_WINDOWS_PER_STATION)
         _, test_ds = split_windowed_dataset(ds_left, train_ratio=0.8)
-        scaler = fit_scaler(train_windowed[0])
-        test_ds = apply_scaler(test_ds, scaler)
+    reference_scaler = train_windowed[0].scaler or fit_scaler(train_windowed[0])
+    test_ds = apply_scaler(test_ds, reference_scaler)
 
-        res = evaluate_model(model, {left: test_ds})
+    res = evaluate_model(model, {left: test_ds}, label=f"LOO station {left}")
         metrics = res.get(left)
         if not metrics:
             continue

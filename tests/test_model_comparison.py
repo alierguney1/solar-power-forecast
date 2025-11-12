@@ -2,7 +2,10 @@
 import numpy as np
 import pytest
 from src.model import WindowedDataset
-from src.baseline_models import train_linear_regression_baseline
+from src.baseline_models import (
+    fit_linear_regression_baseline,
+    predict_with_baseline,
+)
 from src.model_comparison import (
     evaluate_with_training_history,
     compare_models,
@@ -31,7 +34,8 @@ def test_linear_regression_baseline():
     }
     
     # Train baseline
-    predictions = train_linear_regression_baseline(train_datasets, test_datasets)
+    baseline = fit_linear_regression_baseline(train_datasets)
+    predictions = predict_with_baseline(baseline, test_datasets)
     
     # Check that we got predictions for each test station
     assert len(predictions) == 2

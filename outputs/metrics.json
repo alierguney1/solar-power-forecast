@@ -1,11 +1,37 @@
 {
-  "stations": [
-    1,
-    2,
-    4,
-    5,
-    6,
-    7,
-    8
+  "train": {
+    "mean_rmse": 9.284911668064396,
+    "mean_mae": 4.589014536909574,
+    "mean_r2": 0.6733569826898483,
+    "baselines": {
+      "persistence": {
+        "mean_rmse": 8.55644937132198,
+        "mean_mae": 4.418467946428572
+      },
+      "linear_regression": {
+        "mean_rmse": 6.327185357589158,
+        "mean_mae": 4.156251411913153
+      }
+    }
+  },
+  "test": {
+    "mean_rmse": 9.44993366758712,
+    "mean_mae": 4.980868442288065,
+    "mean_r2": 0.6427822829905073,
+    "baselines": {
+      "persistence": {
+        "mean_rmse": 8.915431816717662,
+        "mean_mae": 4.992260892857142
+      },
+      "linear_regression": {
+        "mean_rmse": 6.414815051374573,
+        "mean_mae": 4.381046783826467
+      }
+    }
+  },
+  "mean_training_loss_per_epoch": [
+    0.02605917171708175,
+    0.02268529696656125,
+    0.02039752128933157
   ]
 }

@@ -35,6 +35,7 @@ NEW_COLUMN_NAMES = [
 WINDOW_SIZE = 8
 PRED_DISTANCE = 8
 N_FEATURES = 11
+MAX_WINDOWS_PER_STATION = 5000  # Set to None to disable down-sampling per station
 
 # Model parameters
 LSTM_UNITS = 16

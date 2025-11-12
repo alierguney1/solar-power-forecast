@@ -50,6 +50,23 @@ class WindowedDataset:
             scaler=scaler,
         )
 
+    def limit(self, max_windows: Optional[int]) -> "WindowedDataset":
+        """Down-sample the dataset to at most ``max_windows`` entries while preserving order."""
+
+        if max_windows is None or self.X.shape[0] <= max_windows:
+            return self
+
+        step = max(1, self.X.shape[0] // max_windows)
+        indices = np.arange(0, self.X.shape[0], step)[:max_windows]
+
+        return WindowedDataset(
+            X=self.X[indices].copy(),
+            y=self.y[indices].copy(),
+            baselines=self.baselines[indices].copy(),
+            feature_names=self.feature_names,
+            scaler=self.scaler,
+        )
+
 
 def create_dataset(
     df: pd.DataFrame,
@@ -240,49 +257,101 @@ def _horizon_r2(y_true: np.ndarray, y_pred: np.ndarray) -> List[float]:
 
 def evaluate_model(
     model: Model,
-    test_sets: Dict[int, WindowedDataset],
-) -> Dict[int, Dict[str, object]]:
-    """Evaluate the model and report per-station, per-horizon metrics and persistence baselines."""
+    datasets: Dict[int, WindowedDataset],
+    *,
+    label: str = "Evaluation",
+    extra_baselines: Optional[Dict[str, Dict[int, np.ndarray]]] = None,
+    store_predictions: bool = True,
+) -> Dict[int, Dict[str, Any]]:
+    """Evaluate the model and report metrics for each dataset.
 
-    evaluation: Dict[int, Dict[str, object]] = {}
+    Parameters
+    ----------
+    datasets:
+        Mapping of station id to dataset (train or test split).
+    label:
+        Label shown in logs (e.g. "Train", "Test").
+    extra_baselines:
+        Optional mapping of baseline name -> predictions per station (normalized units).
+    store_predictions:
+        When ``True`` include full prediction arrays in the result (can be large).
+    """
+
+    print(f"\n=== {label} metrics ===")
+
+    evaluation: Dict[int, Dict[str, Any]] = {}
     rmse_values, mae_values, r2_values = [], [], []
-    baseline_rmse_values, baseline_mae_values = [], []
+    baseline_aggregates: Dict[str, Dict[str, List[float]]] = {}
 
-    for station, dataset in test_sets.items():
-        preds = model.predict(dataset.X)
+    def _record_baseline_metric(name: str, rmse: float, mae: float) -> None:
+        bucket = baseline_aggregates.setdefault(name, {"rmse": [], "mae": []})
+        bucket["rmse"].append(rmse)
+        bucket["mae"].append(mae)
+
+    for station, dataset in datasets.items():
+        preds = model.predict(dataset.X, verbose=0)
         preds_actual, y_actual_actual = actual_power(preds, dataset.y, station)
-        baseline_actual, _ = actual_power(dataset.baselines, dataset.y, station)
 
-        station_metrics = {
+        station_metrics: Dict[str, Any] = {
             "rmse_per_horizon": _horizon_rmse(y_actual_actual, preds_actual),
             "mae_per_horizon": _horizon_mae(y_actual_actual, preds_actual),
             "r2_per_horizon": _horizon_r2(y_actual_actual, preds_actual),
             "rmse_overall": rmse_score(y_actual_actual, preds_actual),
             "mae_overall": mae_score(y_actual_actual, preds_actual),
             "r2_overall": r2_score(y_actual_actual, preds_actual),
-            "baseline_rmse_overall": rmse_score(y_actual_actual, baseline_actual),
-            "baseline_mae_overall": mae_score(y_actual_actual, baseline_actual),
-            "baseline_rmse_per_horizon": _horizon_rmse(y_actual_actual, baseline_actual),
-            "baseline_mae_per_horizon": _horizon_mae(y_actual_actual, baseline_actual),
-            "predictions_actual": preds_actual,
-            "targets_actual": y_actual_actual,
-            "baseline_actual": baseline_actual,
         }
 
+        baselines: Dict[str, Dict[str, Any]] = {}
+
+        persistence_actual, _ = actual_power(dataset.baselines, dataset.y, station)
+        baselines["persistence"] = {
+            "rmse_overall": rmse_score(y_actual_actual, persistence_actual),
+            "mae_overall": mae_score(y_actual_actual, persistence_actual),
+            "rmse_per_horizon": _horizon_rmse(y_actual_actual, persistence_actual),
+            "mae_per_horizon": _horizon_mae(y_actual_actual, persistence_actual),
+        }
+        _record_baseline_metric("persistence", baselines["persistence"]["rmse_overall"], baselines["persistence"]["mae_overall"])
+
+        if extra_baselines:
+            for name, preds_map in extra_baselines.items():
+                if station not in preds_map:
+                    continue
+                baseline_pred = np.asarray(preds_map[station], dtype=float)
+                baseline_actual, _ = actual_power(baseline_pred, dataset.y, station)
+                baselines[name] = {
+                    "rmse_overall": rmse_score(y_actual_actual, baseline_actual),
+                    "mae_overall": mae_score(y_actual_actual, baseline_actual),
+                    "rmse_per_horizon": _horizon_rmse(y_actual_actual, baseline_actual),
+                    "mae_per_horizon": _horizon_mae(y_actual_actual, baseline_actual),
+                }
+                _record_baseline_metric(name, baselines[name]["rmse_overall"], baselines[name]["mae_overall"])
+
+        if store_predictions:
+            station_metrics["predictions_actual"] = preds_actual
+            station_metrics["targets_actual"] = y_actual_actual
+            baseline_actuals: Dict[str, Optional[np.ndarray]] = {"persistence": persistence_actual}
+            if extra_baselines:
+                for key, preds_map in extra_baselines.items():
+                    if station in preds_map:
+                        baseline_actuals[key], _ = actual_power(
+                            np.asarray(preds_map[station], dtype=float), dataset.y, station
+                        )
+                    else:
+                        baseline_actuals[key] = None
+            station_metrics["baseline_actuals"] = baseline_actuals
+
+        station_metrics["baselines"] = baselines
         evaluation[station] = station_metrics
 
         rmse_values.append(station_metrics["rmse_overall"])
         mae_values.append(station_metrics["mae_overall"])
         r2_values.append(station_metrics["r2_overall"])
-        baseline_rmse_values.append(station_metrics["baseline_rmse_overall"])
-        baseline_mae_values.append(station_metrics["baseline_mae_overall"])
 
+        best_baseline = min(baselines.items(), key=lambda item: item[1]["rmse_overall"])
         print(
-            f"Station {station}: RMSE={station_metrics['rmse_overall']:.3f} "
-            f"(baseline {station_metrics['baseline_rmse_overall']:.3f}), "
-            f"MAE={station_metrics['mae_overall']:.3f} "
-            f"(baseline {station_metrics['baseline_mae_overall']:.3f}), "
-            f"R2={station_metrics['r2_overall']:.3f}"
+            f"Station {station}: RMSE={station_metrics['rmse_overall']:.3f} | "
+            f"Best baseline ({best_baseline[0]}): {best_baseline[1]['rmse_overall']:.3f}; "
+            f"MAE={station_metrics['mae_overall']:.3f}; R2={station_metrics['r2_overall']:.3f}"
         )
 
     if evaluation:
@@ -290,7 +359,10 @@ def evaluate_model(
         print(f"  Mean RMSE: {float(np.mean(rmse_values)):.3f}")
         print(f"  Mean MAE: {float(np.mean(mae_values)):.3f}")
         print(f"  Mean R²:  {float(np.nanmean(r2_values)):.3f}")
-        print(f"  Baseline Mean RMSE: {float(np.mean(baseline_rmse_values)):.3f}")
-        print(f"  Baseline Mean MAE: {float(np.mean(baseline_mae_values)):.3f}")
+        for baseline_name, values in baseline_aggregates.items():
+            print(
+                f"  {baseline_name.title()} RMSE: {float(np.mean(values['rmse'])):.3f} | "
+                f"MAE: {float(np.mean(values['mae'])):.3f}"
+            )
 
     return evaluation

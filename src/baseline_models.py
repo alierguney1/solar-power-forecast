@@ -1,57 +1,50 @@
 # -*- coding: utf-8 -*-
 """Baseline models for comparison with the LSTM model."""
-from typing import Dict
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Sequence
+
 import numpy as np
 from sklearn.linear_model import LinearRegression
+
 from src.model import WindowedDataset
 
 
-def train_linear_regression_baseline(
-    train_datasets: list,
-    test_datasets: Dict[int, WindowedDataset]
-) -> Dict[int, np.ndarray]:
-    """
-    Train a simple linear regression model for each station.
-    Uses the last timestep features to predict the target horizon.
-    
-    Args:
-        train_datasets: List of training WindowedDataset objects
-        test_datasets: Dictionary mapping station_id to test WindowedDataset
-    
-    Returns:
-        Dictionary mapping station_id to predictions array
-    """
-    predictions = {}
-    
-    # Combine all training data
-    X_train_list = []
-    y_train_list = []
-    
-    for dataset in train_datasets:
-        # Use the last timestep features as input
-        X_train_list.append(dataset.X[:, -1, :])  # Last timestep
-        y_train_list.append(dataset.y)
-    
-    X_train = np.vstack(X_train_list)
-    y_train = np.vstack(y_train_list)
-    
-    # Train a linear regression model for each horizon
+@dataclass
+class LinearRegressionBaseline:
+    """Multi-output linear regression baseline that predicts each horizon step."""
+
+    models: Sequence[LinearRegression]
+
+    def predict(self, dataset: WindowedDataset) -> np.ndarray:
+        """Predict normalized power for each horizon on the given dataset."""
+
+        X_last = dataset.X[:, -1, :]
+        preds = np.column_stack([model.predict(X_last) for model in self.models])
+        return preds
+
+
+def fit_linear_regression_baseline(train_datasets: Sequence[WindowedDataset]) -> LinearRegressionBaseline:
+    """Fit a horizon-wise linear regression using the last timestep features."""
+
+    X_train = np.vstack([dataset.X[:, -1, :] for dataset in train_datasets])
+    y_train = np.vstack([dataset.y for dataset in train_datasets])
+
     models = []
-    n_horizons = y_train.shape[1]
-    
-    for h in range(n_horizons):
+    for horizon in range(y_train.shape[1]):
         model = LinearRegression()
-        model.fit(X_train, y_train[:, h])
+        model.fit(X_train, y_train[:, horizon])
         models.append(model)
-    
-    # Make predictions for each test station
-    for station_id, test_dataset in test_datasets.items():
-        X_test = test_dataset.X[:, -1, :]  # Last timestep
-        preds = np.zeros((X_test.shape[0], n_horizons))
-        
-        for h, model in enumerate(models):
-            preds[:, h] = model.predict(X_test)
-        
-        predictions[station_id] = preds
-    
-    return predictions
+
+    return LinearRegressionBaseline(models=models)
+
+
+def predict_with_baseline(
+    baseline: LinearRegressionBaseline,
+    datasets: Dict[int, WindowedDataset],
+) -> Dict[int, np.ndarray]:
+    """Generate predictions for each dataset using the provided baseline."""
+
+    return {station_id: baseline.predict(ds) for station_id, ds in datasets.items()}
